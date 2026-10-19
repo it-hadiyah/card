@@ -23,6 +23,8 @@ input[type=text]:focus{outline:2px solid var(--teal);border-color:transparent}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .photo-box{border:2px dashed #b9c6c2;border-radius:10px;padding:14px;text-align:center;margin-top:6px}
 .photo-box input[type=range]{width:100%;margin-top:8px}
+.modes{display:flex;gap:16px;justify-content:center;margin:10px 0}
+.modes label{display:flex;gap:6px;align-items:center;margin:0;font-weight:500}
 .hint{font-size:.8rem;color:#667873;margin:6px 0 0}
 button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
 .primary{background:var(--teal);color:#fff}
@@ -58,8 +60,14 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
     <label>الصورة الشخصية</label>
     <div class="photo-box">
       <input type="file" id="photo" accept="image/*">
-      <input type="range" id="zoom" min="1" max="4" step="0.01" value="1" disabled aria-label="تكبير الصورة">
-      <p class="hint">اسحب الصورة داخل البطاقة لتحريكها، واستخدم الشريط للتكبير.</p>
+      <div class="modes" id="modes" hidden>
+        <label><input type="radio" name="mode" value="pop" checked> بارزة فوق الدائرة</label>
+        <label><input type="radio" name="mode" value="circle"> داخل الدائرة</label>
+      </div>
+      <input type="range" id="zoom" min="0.5" max="2.5" step="0.01" value="1" disabled aria-label="تكبير الصورة">
+      <p class="hint">للصورة البارزة استخدم صورة بخلفية شفافة (PNG)، أو اضغط «إزالة الخلفية». اسحب الصورة لتحريكها، والشريط للتكبير.</p>
+      <button type="button" class="secondary" id="removeBg" hidden>إزالة الخلفية تلقائيًا</button>
+      <p class="hint" id="status" role="status"></p>
       <button type="button" class="ghost" id="clearPhoto" hidden>إزالة الصورة</button>
     </div>
 
@@ -99,7 +107,10 @@ const canvas = $('card'), ctx = canvas.getContext('2d');
 const bg = new Image();
 bg.src = '__CARD_BG__';
 
-const photo = {img: null, zoom: 1, ox: 0, oy: 0};   // ox/oy: offset in card units
+// mode 'pop': cut-out photo stands on the circle's bottom edge and may rise above it
+// mode 'circle': photo fills the circle (cover). ox/oy: offset in card units
+const photo = {img: null, file: null, mode: 'pop', zoom: 1, ox: 0, oy: 0};
+const POP_HEIGHT = 102;                           // default cut-out height in card units
 
 function draw(c, scale) {
   c.canvas.width = Math.round(CARD_W * scale);
@@ -108,21 +119,30 @@ function draw(c, scale) {
   c.fillRect(0, 0, c.canvas.width, c.canvas.height);
   c.drawImage(bg, 0, 0, c.canvas.width, c.canvas.height);
 
-  // photo (or the template's green disc when empty)
-  c.save();
-  c.beginPath();
-  c.arc(PHOTO.cx * scale, PHOTO.cy * scale, PHOTO.r * scale, 0, Math.PI * 2);
-  c.clip();
+  // template's green disc, then the photo on top
+  const cx = PHOTO.cx * scale, cy = PHOTO.cy * scale, r = PHOTO.r * scale;
+  c.fillStyle = COLORS.teal;
+  c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fill();
   if (photo.img) {
-    const d = PHOTO.r * 2;
-    const base = Math.max(d / photo.img.width, d / photo.img.height) * photo.zoom;
-    const w = photo.img.width * base, h = photo.img.height * base;
-    c.drawImage(photo.img, (PHOTO.cx - w / 2 + photo.ox) * scale, (PHOTO.cy - h / 2 + photo.oy) * scale, w * scale, h * scale);
-  } else {
-    c.fillStyle = COLORS.teal;
-    c.fillRect(0, 0, c.canvas.width, c.canvas.height);
+    const iw = photo.img.width, ih = photo.img.height;
+    c.save();
+    c.beginPath();
+    if (photo.mode === 'pop') {
+      c.rect(0, 0, c.canvas.width, cy);           // everything above the centre line stays visible
+    }
+    c.moveTo(cx + r, cy);
+    c.arc(cx, cy, r, 0, Math.PI * 2);              // the lower half is cut by the circle
+    c.clip();
+    if (photo.mode === 'pop') {
+      const h = POP_HEIGHT * photo.zoom, w = h * iw / ih;
+      c.drawImage(photo.img, (PHOTO.cx - w / 2 + photo.ox) * scale, (PHOTO.cy + PHOTO.r - h + photo.oy) * scale, w * scale, h * scale);
+    } else {
+      const base = Math.max(PHOTO.r * 2 / iw, PHOTO.r * 2 / ih) * photo.zoom;
+      const w = iw * base, h = ih * base;
+      c.drawImage(photo.img, (PHOTO.cx - w / 2 + photo.ox) * scale, (PHOTO.cy - h / 2 + photo.oy) * scale, w * scale, h * scale);
+    }
+    c.restore();
   }
-  c.restore();
 
   // text
   c.textAlign = 'center';
@@ -149,26 +169,82 @@ function render() {
 // ---- inputs ----
 for (const k of Object.keys(LINES)) $(k).addEventListener('input', render);
 
-$('photo').addEventListener('change', e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const url = URL.createObjectURL(f);
+const setStatus = t => { $('status').textContent = t; };
+
+function hasTransparency(img) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d', {willReadFrequently: true});
+  g.drawImage(img, 0, 0, 64, 64);
+  const d = g.getImageData(0, 0, 64, 64).data;
+  let n = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) n++;
+  return n > 64 * 64 * 0.05;
+}
+
+function setMode(mode) {
+  photo.mode = mode;
+  document.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+  const z = $('zoom');
+  z.min = mode === 'pop' ? 0.5 : 1;
+  z.max = mode === 'pop' ? 2.5 : 4;
+  photo.zoom = 1; photo.ox = photo.oy = 0; z.value = 1;
+}
+
+function loadPhoto(blob, file) {
+  const url = URL.createObjectURL(blob);
   const img = new Image();
   img.onload = () => {
-    photo.img = img; photo.zoom = 1; photo.ox = photo.oy = 0;
-    $('zoom').value = 1; $('zoom').disabled = false; $('clearPhoto').hidden = false;
+    photo.img = img; photo.file = file;
+    setMode(hasTransparency(img) ? 'pop' : 'circle');
+    $('zoom').disabled = false; $('clearPhoto').hidden = false;
+    $('modes').hidden = false; $('removeBg').hidden = false;
+    setStatus(photo.mode === 'circle' ? 'الصورة بخلفية، تظهر داخل الدائرة. اضغط «إزالة الخلفية» لتبرز فوقها.' : '');
     render();
   };
   img.src = url;
+}
+
+$('photo').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) loadPhoto(f, f);
 });
+for (const r of document.querySelectorAll('input[name=mode]')) {
+  r.addEventListener('change', () => { setMode(r.value); render(); });
+}
 $('zoom').addEventListener('input', e => { photo.zoom = +e.target.value; clampOffset(); render(); });
 $('clearPhoto').addEventListener('click', () => {
-  photo.img = null; $('photo').value = ''; $('zoom').disabled = true; $('clearPhoto').hidden = true; render();
+  photo.img = photo.file = null; $('photo').value = '';
+  $('zoom').disabled = true; $('clearPhoto').hidden = $('modes').hidden = $('removeBg').hidden = true;
+  setStatus(''); render();
 });
 
-// keep the photo covering the whole circle
+// background removal runs in the browser; the model is downloaded on first use only
+$('removeBg').addEventListener('click', async () => {
+  if (!photo.file) return;
+  const btn = $('removeBg');
+  btn.disabled = true; setStatus('جارٍ إزالة الخلفية... قد تستغرق المرة الأولى دقيقة لتنزيل النموذج.');
+  try {
+    const {removeBackground} = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm');
+    const out = await removeBackground(photo.file, {output: {format: 'image/png'}});
+    loadPhoto(out, photo.file);
+    setStatus('تمت إزالة الخلفية.');
+  } catch (err) {
+    console.error(err);
+    setStatus('تعذّرت إزالة الخلفية. استخدم صورة PNG شفافة الخلفية بدلًا منها.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// keep the photo from drifting away from the circle
 function clampOffset() {
   if (!photo.img) return;
+  if (photo.mode === 'pop') {
+    photo.ox = Math.min(40, Math.max(-40, photo.ox));
+    photo.oy = Math.min(40, Math.max(-40, photo.oy));
+    return;
+  }
   const d = PHOTO.r * 2;
   const base = Math.max(d / photo.img.width, d / photo.img.height) * photo.zoom;
   const mx = Math.max(0, (photo.img.width * base - d) / 2), my = Math.max(0, (photo.img.height * base - d) / 2);
