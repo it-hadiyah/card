@@ -31,14 +31,15 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
 .preview{position:sticky;top:16px;text-align:center}
 #card{width:100%;max-width:300px;aspect-ratio:153/242.25;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);touch-action:none;cursor:grab;background:#fff}
+#back{width:100%;max-width:300px;aspect-ratio:153/242.25;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18)}
 #card.drag{cursor:grabbing}
 @media (max-width:820px){main{grid-template-columns:1fr}.preview{position:static;order:-1}}
-#printImg{display:none}
+.printImg{display:none}
 @media print{
   @page{size:54mm 85.6mm;margin:0}
   body{background:#fff}
   header,main{display:none}
-  #printImg{display:block;width:54mm;height:85.6mm}
+  .printImg{display:block;width:54mm;height:85.6mm;break-after:page}
 }
 </style>
 </head>
@@ -64,16 +65,20 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
 
     <div class="actions">
       <button type="button" class="primary" id="dl">تنزيل البطاقة (PNG)</button>
-      <button type="button" class="secondary" id="print">طباعة (54×85.6 مم)</button>
+      <button type="button" class="secondary" id="dlBack">تنزيل الظهر (PNG)</button>
+      <button type="button" class="secondary" id="print">طباعة الوجهين (54×85.6 مم)</button>
     </div>
   </section>
 
   <aside class="panel preview">
     <h2>المعاينة</h2>
     <canvas id="card"></canvas>
+    <h2 style="margin-top:20px">ظهر البطاقة</h2>
+    <img id="back" src="__CARD_BACK__" alt="ظهر البطاقة">
   </aside>
 </main>
-<img id="printImg" alt="">
+<img id="printImg" class="printImg" alt="">
+<img id="printBack" class="printImg" src="__CARD_BACK__" alt="">
 
 <script>
 const CARD_W = 153, CARD_H = 242.25;           // card units (SVG viewBox)
@@ -205,6 +210,10 @@ $('dl').addEventListener('click', () => {
     a.href = URL.createObjectURL(b); a.download = fileName(); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }, 'image/png');
+});
+$('dlBack').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = $('back').src; a.download = 'card-back.png'; a.click();
 });
 $('print').addEventListener('click', () => {
   $('printImg').src = exportCanvas().toDataURL('image/png');
