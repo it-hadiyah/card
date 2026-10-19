@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مصدر بطاقة الموظف | هدية الخير</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@600;700&family=Tajawal:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{--teal:#0d7868;--gold:#bb9a5f;--ink:#1d2b28;--line:#e3e8e6;--bg:#f4f7f6}
+*{box-sizing:border-box}
+body{margin:0;font-family:Tajawal,system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--teal);color:#fff;padding:16px 24px;border-bottom:4px solid var(--gold)}
+header h1{margin:0;font-size:1.25rem}
+main{max-width:980px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px}
+.panel h2{margin:0 0 14px;font-size:1.05rem;color:var(--teal)}
+label{display:block;font-weight:700;font-size:.9rem;margin:12px 0 4px}
+input[type=text]{width:100%;padding:10px 12px;border:1px solid #cbd5d2;border-radius:8px;font:inherit}
+input[type=text]:focus{outline:2px solid var(--teal);border-color:transparent}
+.en{direction:ltr;text-align:left;font-family:Rubik,sans-serif}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.photo-box{border:2px dashed #b9c6c2;border-radius:10px;padding:14px;text-align:center;margin-top:6px}
+.photo-box input[type=range]{width:100%;margin-top:8px}
+.hint{font-size:.8rem;color:#667873;margin:6px 0 0}
+button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
+.primary{background:var(--teal);color:#fff}
+.secondary{background:#fff;color:var(--teal);border:1.5px solid var(--teal)}
+.ghost{background:none;color:#a33;padding:6px 0}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.preview{position:sticky;top:16px;text-align:center}
+#card{width:100%;max-width:300px;aspect-ratio:153/242.25;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);touch-action:none;cursor:grab;background:#fff}
+#card.drag{cursor:grabbing}
+@media (max-width:820px){main{grid-template-columns:1fr}.preview{position:static;order:-1}}
+#printImg{display:none}
+@media print{
+  @page{size:54mm 85.6mm;margin:0}
+  body{background:#fff}
+  header,main{display:none}
+  #printImg{display:block;width:54mm;height:85.6mm}
+}
+</style>
+</head>
+<body>
+<header><h1>مصدر بطاقة الموظف — هدية الخير</h1></header>
+<main>
+  <section class="panel">
+    <h2>بيانات الموظف</h2>
+    <div class="row">
+      <div><label for="arName">الاسم (عربي)</label><input type="text" id="arName" placeholder="مثال: محمد عبدالله العتيبي"></div>
+      <div><label for="enName">Name (English)</label><input type="text" id="enName" class="en" placeholder="Mohammed Alotaibi"></div>
+      <div><label for="arTitle">المنصب الوظيفي (عربي)</label><input type="text" id="arTitle" placeholder="مثال: أخصائي تقنية معلومات"></div>
+      <div><label for="enTitle">Position (English)</label><input type="text" id="enTitle" class="en" placeholder="IT Specialist"></div>
+    </div>
+
+    <label>الصورة الشخصية</label>
+    <div class="photo-box">
+      <input type="file" id="photo" accept="image/*">
+      <input type="range" id="zoom" min="1" max="4" step="0.01" value="1" disabled aria-label="تكبير الصورة">
+      <p class="hint">اسحب الصورة داخل البطاقة لتحريكها، واستخدم الشريط للتكبير.</p>
+      <button type="button" class="ghost" id="clearPhoto" hidden>إزالة الصورة</button>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary" id="dl">تنزيل البطاقة (PNG)</button>
+      <button type="button" class="secondary" id="print">طباعة (54×85.6 مم)</button>
+    </div>
+  </section>
+
+  <aside class="panel preview">
+    <h2>المعاينة</h2>
+    <canvas id="card"></canvas>
+  </aside>
+</main>
+<img id="printImg" alt="">
+
+<script>
+const CARD_W = 153, CARD_H = 242.25;           // card units (SVG viewBox)
+const PHOTO = {cx: 76.5, cy: 109.08, r: 39.1};  // photo circle in card units
+const COLORS = {teal: '#0d7868', gold: '#bb9a5f'};
+const MAX_TEXT_W = 128;                         // widest a line may get before shrinking
+// baseline y, default font size, weight, color for each field
+const LINES = {
+  arName:  {y: 166.86, size: 11.5, font: 'Tajawal', weight: 700, color: COLORS.teal, rtl: true},
+  enName:  {y: 179.50, size: 9.8,  font: 'Rubik',   weight: 700, color: COLORS.gold, upper: true},
+  arTitle: {y: 194.94, size: 9.2,  font: 'Tajawal', weight: 700, color: COLORS.teal, rtl: true},
+  enTitle: {y: 204.25, size: 7.6,  font: 'Rubik',   weight: 600, color: COLORS.gold, upper: true},
+};
+const DEFAULTS = {arName: 'الاسم هنا يكتب', enName: 'Write name here', arTitle: 'المنصب الوظيفي', enTitle: 'Position'};
+
+const $ = id => document.getElementById(id);
+const canvas = $('card'), ctx = canvas.getContext('2d');
+const bg = new Image();
+bg.src = '__CARD_BG__';
+
+const photo = {img: null, zoom: 1, ox: 0, oy: 0};   // ox/oy: offset in card units
+
+function draw(c, scale) {
+  c.canvas.width = Math.round(CARD_W * scale);
+  c.canvas.height = Math.round(CARD_H * scale);
+  c.fillStyle = '#fff';
+  c.fillRect(0, 0, c.canvas.width, c.canvas.height);
+  c.drawImage(bg, 0, 0, c.canvas.width, c.canvas.height);
+
+  // photo (or the template's green disc when empty)
+  c.save();
+  c.beginPath();
+  c.arc(PHOTO.cx * scale, PHOTO.cy * scale, PHOTO.r * scale, 0, Math.PI * 2);
+  c.clip();
+  if (photo.img) {
+    const d = PHOTO.r * 2;
+    const base = Math.max(d / photo.img.width, d / photo.img.height) * photo.zoom;
+    const w = photo.img.width * base, h = photo.img.height * base;
+    c.drawImage(photo.img, (PHOTO.cx - w / 2 + photo.ox) * scale, (PHOTO.cy - h / 2 + photo.oy) * scale, w * scale, h * scale);
+  } else {
+    c.fillStyle = COLORS.teal;
+    c.fillRect(0, 0, c.canvas.width, c.canvas.height);
+  }
+  c.restore();
+
+  // text
+  c.textAlign = 'center';
+  c.textBaseline = 'alphabetic';
+  for (const [key, L] of Object.entries(LINES)) {
+    let text = $(key).value.trim() || DEFAULTS[key];
+    if (L.upper) text = text.toUpperCase();
+    c.direction = L.rtl ? 'rtl' : 'ltr';
+    c.fillStyle = L.color;
+    let size = L.size;
+    const font = s => `${L.weight} ${s * scale}px ${L.font}, Tajawal, sans-serif`;
+    c.font = font(size);
+    const w = c.measureText(text).width / scale;
+    if (w > MAX_TEXT_W) { size *= MAX_TEXT_W / w; c.font = font(size); }
+    c.fillText(text, CARD_W / 2 * scale, L.y * scale);
+  }
+}
+
+function render() {
+  const scale = Math.min(window.devicePixelRatio || 1, 2) * 4;
+  draw(ctx, scale);
+}
+
+// ---- inputs ----
+for (const k of Object.keys(LINES)) $(k).addEventListener('input', render);
+
+$('photo').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    photo.img = img; photo.zoom = 1; photo.ox = photo.oy = 0;
+    $('zoom').value = 1; $('zoom').disabled = false; $('clearPhoto').hidden = false;
+    render();
+  };
+  img.src = url;
+});
+$('zoom').addEventListener('input', e => { photo.zoom = +e.target.value; clampOffset(); render(); });
+$('clearPhoto').addEventListener('click', () => {
+  photo.img = null; $('photo').value = ''; $('zoom').disabled = true; $('clearPhoto').hidden = true; render();
+});
+
+// keep the photo covering the whole circle
+function clampOffset() {
+  if (!photo.img) return;
+  const d = PHOTO.r * 2;
+  const base = Math.max(d / photo.img.width, d / photo.img.height) * photo.zoom;
+  const mx = Math.max(0, (photo.img.width * base - d) / 2), my = Math.max(0, (photo.img.height * base - d) / 2);
+  photo.ox = Math.min(mx, Math.max(-mx, photo.ox));
+  photo.oy = Math.min(my, Math.max(-my, photo.oy));
+}
+
+// drag to pan
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  if (!photo.img) return;
+  drag = {x: e.clientX, y: e.clientY, ox: photo.ox, oy: photo.oy};
+  canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag');
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const k = CARD_W / canvas.getBoundingClientRect().width;
+  photo.ox = drag.ox + (e.clientX - drag.x) * k;
+  photo.oy = drag.oy + (e.clientY - drag.y) * k;
+  clampOffset(); render();
+});
+const endDrag = () => { drag = null; canvas.classList.remove('drag'); };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+// ---- export ----
+function exportCanvas() {
+  const c = document.createElement('canvas');
+  draw(c.getContext('2d'), 12);   // 1836 x 2907 px
+  return c;
+}
+function fileName() {
+  const n = ($('enName').value.trim() || $('arName').value.trim() || 'employee').replace(/[\\/:*?"<>|\s]+/g, '-');
+  return `card-${n}.png`;
+}
+$('dl').addEventListener('click', () => {
+  exportCanvas().toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = fileName(); a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, 'image/png');
+});
+$('print').addEventListener('click', () => {
+  $('printImg').src = exportCanvas().toDataURL('image/png');
+  $('printImg').decode().then(() => window.print());
+});
+
+// ---- boot ----
+const fontsReady = Promise.all([
+  document.fonts.load('700 20px Tajawal', 'ع'), document.fonts.load('500 20px Tajawal', 'ع'),
+  document.fonts.load('700 20px Rubik', 'A'), document.fonts.load('600 20px Rubik', 'A'),
+]).catch(() => {});
+Promise.all([bg.decode(), fontsReady]).then(render);
+</script>
+</body>
+</html>
