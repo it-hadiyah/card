@@ -23,6 +23,7 @@ input[type=text]:focus{outline:2px solid var(--teal);border-color:transparent}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .photo-box{border:2px dashed #b9c6c2;border-radius:10px;padding:14px;text-align:center;margin-top:6px}
 .photo-box input[type=range]{width:100%;margin-top:8px}
+.check{display:flex;gap:8px;align-items:center;font-weight:500;margin-top:12px}
 .modes{display:flex;gap:16px;justify-content:center;margin:10px 0}
 .modes label{display:flex;gap:6px;align-items:center;margin:0;font-weight:500}
 .hint{font-size:.8rem;color:#667873;margin:6px 0 0}
@@ -38,10 +39,10 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
 @media (max-width:820px){main{grid-template-columns:1fr}.preview{position:static;order:-1}}
 .printImg{display:none}
 @media print{
-  @page{size:54mm 85.6mm;margin:0}
+  @page{size:54mm 85.5mm;margin:0}
   body{background:#fff}
   header,main{display:none}
-  .printImg{display:block;width:54mm;height:85.6mm;break-after:page}
+  .printImg{display:block;width:54mm;height:85.5mm;break-after:page}
 }
 </style>
 </head>
@@ -72,10 +73,12 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
     </div>
 
     <div class="actions">
-      <button type="button" class="primary" id="dl">تنزيل البطاقة (PNG)</button>
-      <button type="button" class="secondary" id="dlBack">تنزيل الظهر (PNG)</button>
-      <button type="button" class="secondary" id="print">طباعة الوجهين (54×85.6 مم)</button>
+      <button type="button" class="primary" id="dlPdf">حفظ PDF للطباعة (54×85.5 مم)</button>
+      <button type="button" class="secondary" id="dl">حفظ صورة PNG</button>
+      <button type="button" class="secondary" id="print">طباعة</button>
     </div>
+    <label class="check"><input type="checkbox" id="withBack" checked> إضافة ظهر البطاقة كصفحة ثانية في ملف PDF</label>
+    <p class="hint" id="pdfStatus" role="status"></p>
   </section>
 
   <aside class="panel preview">
@@ -287,9 +290,83 @@ $('dl').addEventListener('click', () => {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }, 'image/png');
 });
-$('dlBack').addEventListener('click', () => {
-  const a = document.createElement('a');
-  a.href = $('back').src; a.download = 'card-back.png'; a.click();
+// ---- PDF (one image per page, exact card size, lossless) ----
+const PDF_W_MM = 54, PDF_H_MM = 85.5;
+const mmToPt = mm => mm * 72 / 25.4;
+
+async function deflate(bytes) {
+  const cs = new CompressionStream('deflate');
+  const w = cs.writable.getWriter();
+  w.write(bytes); w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+
+async function rgbOf(canvas) {
+  const {width, height} = canvas;
+  const rgba = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+  const rgb = new Uint8Array(width * height * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+    rgb[j] = rgba[i]; rgb[j + 1] = rgba[i + 1]; rgb[j + 2] = rgba[i + 2];
+  }
+  return {width, height, data: await deflate(rgb)};
+}
+
+async function buildPdf(canvases) {
+  const enc = new TextEncoder();
+  const W = mmToPt(PDF_W_MM).toFixed(3), H = mmToPt(PDF_H_MM).toFixed(3);
+  const chunks = [], offsets = [];
+  let pos = 0;
+  const put = x => { const b = typeof x === 'string' ? enc.encode(x) : x; chunks.push(b); pos += b.length; };
+  const begin = n => { offsets[n] = pos; put(`${n} 0 obj\n`); };
+
+  put('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const n = canvases.length;
+  begin(1); put('<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  begin(2); put(`<< /Type /Pages /Count ${n} /Kids [${canvases.map((_, i) => `${3 + i * 3} 0 R`).join(' ')}] >>\nendobj\n`);
+  for (let i = 0; i < n; i++) {
+    const page = 3 + i * 3, content = page + 1, image = page + 2;
+    const img = await rgbOf(canvases[i]);
+    begin(page);
+    put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /TrimBox [0 0 ${W} ${H}] ` +
+        `/Resources << /XObject << /Im0 ${image} 0 R >> >> /Contents ${content} 0 R >>\nendobj\n`);
+    const draw = `q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`;
+    begin(content); put(`<< /Length ${draw.length} >>\nstream\n${draw}\nendstream\nendobj\n`);
+    begin(image);
+    put(`<< /Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} /ColorSpace /DeviceRGB ` +
+        `/BitsPerComponent 8 /Filter /FlateDecode /Length ${img.data.length} >>\nstream\n`);
+    put(img.data); put('\nendstream\nendobj\n');
+  }
+  const total = 3 + n * 3, xref = pos;
+  put(`xref\n0 ${total}\n0000000000 65535 f \n`);
+  for (let i = 1; i < total; i++) put(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
+  put(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(chunks, {type: 'application/pdf'});
+}
+
+function backCanvas() {
+  const img = $('back'), c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return c;
+}
+
+$('dlPdf').addEventListener('click', async () => {
+  const btn = $('dlPdf');
+  btn.disabled = true; $('pdfStatus').textContent = 'جارٍ تجهيز ملف PDF...';
+  try {
+    const pages = [exportCanvas()];
+    if ($('withBack').checked) pages.push(backCanvas());
+    const blob = await buildPdf(pages);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = fileName().replace(/\.png$/, '.pdf'); a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $('pdfStatus').textContent = '';
+  } catch (err) {
+    console.error(err);
+    $('pdfStatus').textContent = 'تعذّر إنشاء PDF. جرّب متصفحًا حديثًا (Chrome أو Edge).';
+  } finally {
+    btn.disabled = false;
+  }
 });
 $('print').addEventListener('click', () => {
   $('printImg').src = exportCanvas().toDataURL('image/png');
