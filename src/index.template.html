@@ -56,6 +56,7 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 16px
       <div><label for="enName">Name (English)</label><input type="text" id="enName" class="en" placeholder="Mohammed Alotaibi"></div>
       <div><label for="arTitle">المنصب الوظيفي (عربي)</label><input type="text" id="arTitle" placeholder="مثال: أخصائي تقنية معلومات"></div>
       <div><label for="enTitle">Position (English)</label><input type="text" id="enTitle" class="en" placeholder="IT Specialist"></div>
+      <div><label for="empNo">الرقم الوظيفي</label><input type="text" id="empNo" class="en" inputmode="numeric" placeholder="1234"></div>
     </div>
 
     <label>الصورة الشخصية</label>
@@ -102,6 +103,7 @@ const LINES = {
   enName:  {y: 179.50, size: 9.8,  font: 'Rubik',   weight: 700, color: COLORS.gold, upper: true},
   arTitle: {y: 194.94, size: 9.2,  font: 'Tajawal', weight: 700, color: COLORS.teal, rtl: true},
   enTitle: {y: 204.25, size: 7.6,  font: 'Rubik',   weight: 600, color: COLORS.gold, upper: true},
+  empNo:   {y: 217.00, size: 8,    font: 'Rubik',   weight: 600, color: COLORS.teal},
 };
 const DEFAULTS = {arName: 'الاسم هنا يكتب', enName: 'Write name here', arTitle: 'المنصب الوظيفي', enTitle: 'Position'};
 
@@ -152,6 +154,7 @@ function draw(c, scale) {
   c.textBaseline = 'alphabetic';
   for (const [key, L] of Object.entries(LINES)) {
     let text = $(key).value.trim() || DEFAULTS[key];
+    if (!text) continue;                       // optional line left empty
     if (L.upper) text = text.toUpperCase();
     c.direction = L.rtl ? 'rtl' : 'ltr';
     c.fillStyle = L.color;
